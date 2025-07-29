@@ -1,14 +1,15 @@
 # Bouncing Cube Screensaver
 
-A Windows screensaver featuring a bouncing cube that celebrates when it hits a corner!
+A Windows screensaver featuring a 3D cube that bounces across multiple monitors with smooth rotation and configurable settings.
 
 ## Features
 
-- 3D cube with realistic physics
-- Multi-monitor support - each monitor gets its own cube
-- Corner detection with celebration animation
-- Smooth OpenGL rendering
-- Random colors and speeds for each cube
+- **Single cube across multiple monitors**: Cube travels seamlessly between all connected displays
+- **Smooth 3D rotation**: Uses rotation matrices for clean motion without visual jumps
+- **Configurable cube size**: Settings dialog with slider (Small/Medium/Large)
+- **Corner celebration**: Cube pulses and changes color when hitting screen corners
+- **Perspective projection**: Proper 3D rendering with lighting and depth
+- **Persistent settings**: Cube size preference saved to Windows registry
 
 ## Building
 
@@ -40,29 +41,35 @@ Then open the generated `.sln` file in Visual Studio and build in Release mode.
 ### Method 1: Quick Install
 1. Right-click on `BouncingCube.scr`
 2. Select "Install"
+3. Configure cube size in Screen Saver settings
 
 ### Method 2: System Installation
 1. Copy `BouncingCube.scr` to `C:\Windows\System32\`
 2. Go to Windows Settings > Personalization > Lock screen
 3. Click "Screen saver settings"
 4. Select "BouncingCube" from the dropdown
+5. Click "Settings" to adjust cube size
 
 ## How It Works
 
-- Each monitor displays its own bouncing cube
-- The cube bounces off the edges of the screen
-- When the cube hits a corner (within a small threshold), it triggers a celebration:
+- A single 3D cube travels across all connected monitors seamlessly
+- The cube uses single-axis rotation for smooth, predictable motion
+- Bouncing off screen edges generates new random rotation axes while preserving orientation
+- Corner detection triggers celebration effects:
   - The cube pulses in size
-  - The colors brighten
+  - The colors brighten and cycle
   - The effect lasts for about 1 second
+- Cube size can be adjusted from Small to Large in the settings dialog
 
 ## Technical Details
 
 - Written in C++ using Win32 API and OpenGL
-- Uses the Windows screensaver library (scrnsave.lib)
+- Uses perspective projection for proper 3D depth perception
+- Rotation matrices prevent visual jumps and gimbal lock issues
+- Multi-monitor support via EnumDisplayMonitors with shared cube state
+- Settings stored in Windows registry for persistence
+- Uses common controls (trackbar) for configuration dialog
 - Implements required screensaver exports: ScreenSaverProc, ScreenSaverConfigureDialog
-- Multi-monitor support via EnumDisplayMonitors
-- Each monitor gets its own OpenGL context
 
 ## Troubleshooting
 
