@@ -2,6 +2,7 @@
 #include <scrnsave.h>
 #include <GL/gl.h>
 #include <GL/glu.h>
+#include <commctrl.h>
 #include <vector>
 #include <cmath>
 #include <ctime>
@@ -13,6 +14,11 @@
 #pragma comment(lib, "glu32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "comctl32.lib")
+
+#define IDC_CUBE_SIZE_SLIDER 1001
+#define IDC_CUBE_SIZE_LABEL 1002
+#define REGISTRY_KEY "Software\\BouncingCubeScreensaver"
 
 struct Cube {
     float x, y, z;  // Screen space coordinates in pixels
@@ -37,7 +43,7 @@ struct Monitor {
 Cube globalCube;
 
 std::vector<Monitor> monitors;
-const float CUBE_SIZE = 50.0f;  // Size in pixels
+float g_CubeSize = 0.1f;  // Default cube scale for 3D rendering
 const float SPEED_MULTIPLIER = 1.0f;
 const int CELEBRATION_DURATION = 60;
 
@@ -61,6 +67,45 @@ void CreateRotationMatrix(float matrix[16], float angle, float x, float y, float
     matrix[4] = y*x*ic + z*s;   matrix[5] = c + y*y*ic;     matrix[6] = y*z*ic - x*s;   matrix[7] = 0;
     matrix[8] = z*x*ic - y*s;   matrix[9] = z*y*ic + x*s;   matrix[10] = c + z*z*ic;    matrix[11] = 0;
     matrix[12] = 0;             matrix[13] = 0;             matrix[14] = 0;             matrix[15] = 1;
+}
+
+void LoadSettings() {
+    HKEY hKey;
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD dwSize = sizeof(float);
+        RegQueryValueEx(hKey, "CubeSize", NULL, NULL, (LPBYTE)&g_CubeSize, &dwSize);
+        RegCloseKey(hKey);
+    }
+}
+
+void SaveSettings() {
+    HKEY hKey;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        RegSetValueEx(hKey, "CubeSize", 0, REG_BINARY, (LPBYTE)&g_CubeSize, sizeof(float));
+        RegCloseKey(hKey);
+    }
+}
+
+float CubeSizeSliderToScale(int sliderPos) {
+    // Convert slider position (0-100) to cube scale (0.05 to 0.6)
+    return 0.05f + (sliderPos / 100.0f) * 0.55f;
+}
+
+int CubeScaleToSlider(float scale) {
+    // Convert cube scale (0.05 to 0.6) to slider position (0-100)
+    return (int)((scale - 0.05f) / 0.55f * 100.0f);
+}
+
+const char* GetCubeSizeLabel(int sliderPos) {
+    if (sliderPos < 25) return "Small";
+    else if (sliderPos < 75) return "Medium";
+    else return "Large";
+}
+
+float GetCubeSizeInPixels() {
+    // Convert 3D cube scale to approximate pixel size for boundary detection
+    // This is a rough approximation based on the rendering scale
+    return g_CubeSize * 500.0f;  // Scale factor to convert to reasonable pixel size
 }
 
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
@@ -151,8 +196,8 @@ void DrawCube(const Cube& cube, const Monitor& mon) {
     float relX = (cube.x - mon.bounds.left) / (mon.bounds.right - mon.bounds.left) * 4.0f * aspect - 2.0f * aspect;
     float relY = -((cube.y - mon.bounds.top) / (mon.bounds.bottom - mon.bounds.top) * 4.0f - 2.0f);
     
-    // Fixed cube size for perspective projection
-    float cubeScale = 0.1f;
+    // Use configurable cube size
+    float cubeScale = g_CubeSize;
     
     glPushMatrix();
     glTranslatef(relX, relY, -5.0f);
@@ -249,6 +294,7 @@ void UpdateCube() {
     }
     
     bool hitCorner = false;
+    const float CUBE_SIZE = GetCubeSizeInPixels();
     const float CORNER_THRESHOLD = CUBE_SIZE * 2;
     
     // Check boundaries against total desktop area
@@ -402,6 +448,7 @@ void RenderScene(Monitor& mon) {
     glLoadIdentity();
     
     // Check if cube is visible on this monitor
+    const float CUBE_SIZE = GetCubeSizeInPixels();
     if (globalCube.active &&
         globalCube.x + CUBE_SIZE >= mon.bounds.left &&
         globalCube.x - CUBE_SIZE <= mon.bounds.right &&
@@ -422,6 +469,7 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     case WM_CREATE:
         srand(static_cast<unsigned>(time(nullptr)));
         if (isFirstMonitor) {
+            LoadSettings();  // Load settings before initializing
             monitors.clear();
             EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
             InitializeCube();
@@ -493,13 +541,46 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
 }
 
 BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
+    static int currentSliderPos = 50;  // Default to medium
+    
     switch (message) {
     case WM_INITDIALOG:
-        return TRUE;
+        {
+            // Initialize common controls
+            InitCommonControls();
+            
+            // Load current settings
+            LoadSettings();
+            currentSliderPos = CubeScaleToSlider(g_CubeSize);
+            
+            // Set up the slider
+            HWND hSlider = GetDlgItem(hDlg, IDC_CUBE_SIZE_SLIDER);
+            SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+            SendMessage(hSlider, TBM_SETPOS, TRUE, currentSliderPos);
+            SendMessage(hSlider, TBM_SETTICFREQ, 25, 0);
+            
+            // Update label
+            SetDlgItemText(hDlg, IDC_CUBE_SIZE_LABEL, GetCubeSizeLabel(currentSliderPos));
+            return TRUE;
+        }
+        
+    case WM_HSCROLL:
+        if ((HWND)lParam == GetDlgItem(hDlg, IDC_CUBE_SIZE_SLIDER)) {
+            currentSliderPos = (int)SendMessage((HWND)lParam, TBM_GETPOS, 0, 0);
+            SetDlgItemText(hDlg, IDC_CUBE_SIZE_LABEL, GetCubeSizeLabel(currentSliderPos));
+            return TRUE;
+        }
+        break;
         
     case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
-            EndDialog(hDlg, LOWORD(wParam));
+        if (LOWORD(wParam) == IDOK) {
+            // Save settings
+            g_CubeSize = CubeSizeSliderToScale(currentSliderPos);
+            SaveSettings();
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        } else if (LOWORD(wParam) == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
             return TRUE;
         }
         break;
