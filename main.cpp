@@ -116,9 +116,11 @@ void DrawCube(const Cube& cube, const Monitor& mon) {
     float relX = (cube.x - mon.bounds.left) / (mon.bounds.right - mon.bounds.left) * 2.0f - 1.0f;
     float relY = -((cube.y - mon.bounds.top) / (mon.bounds.bottom - mon.bounds.top) * 2.0f - 1.0f);
     
-    // Calculate cube size relative to screen dimensions
-    float cubeScaleX = CUBE_SIZE / (mon.bounds.right - mon.bounds.left) * 2.0f;
-    float cubeScaleY = CUBE_SIZE / (mon.bounds.bottom - mon.bounds.top) * 2.0f;
+    // Calculate uniform cube size based on smaller screen dimension to maintain aspect ratio
+    float screenWidth = mon.bounds.right - mon.bounds.left;
+    float screenHeight = mon.bounds.bottom - mon.bounds.top;
+    float minDimension = min(screenWidth, screenHeight);
+    float cubeScale = CUBE_SIZE / minDimension * 2.0f;
     
     glPushMatrix();
     glTranslatef(relX, relY, -2.0f);
@@ -141,45 +143,45 @@ void DrawCube(const Cube& cube, const Monitor& mon) {
     glBegin(GL_QUADS);
     // Front face
     glNormal3f(0.0f, 0.0f, 1.0f);
-    glVertex3f(-cubeScaleX, -cubeScaleY, cubeScaleX);
-    glVertex3f(cubeScaleX, -cubeScaleY, cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, cubeScaleX);
-    glVertex3f(-cubeScaleX, cubeScaleY, cubeScaleX);
+    glVertex3f(-cubeScale, -cubeScale, cubeScale);
+    glVertex3f(cubeScale, -cubeScale, cubeScale);
+    glVertex3f(cubeScale, cubeScale, cubeScale);
+    glVertex3f(-cubeScale, cubeScale, cubeScale);
     
     // Back face
     glNormal3f(0.0f, 0.0f, -1.0f);
-    glVertex3f(-cubeScaleX, -cubeScaleY, -cubeScaleX);
-    glVertex3f(-cubeScaleX, cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, -cubeScaleY, -cubeScaleX);
+    glVertex3f(-cubeScale, -cubeScale, -cubeScale);
+    glVertex3f(-cubeScale, cubeScale, -cubeScale);
+    glVertex3f(cubeScale, cubeScale, -cubeScale);
+    glVertex3f(cubeScale, -cubeScale, -cubeScale);
     
     // Top face
     glNormal3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(-cubeScaleX, cubeScaleY, -cubeScaleX);
-    glVertex3f(-cubeScaleX, cubeScaleY, cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, -cubeScaleX);
+    glVertex3f(-cubeScale, cubeScale, -cubeScale);
+    glVertex3f(-cubeScale, cubeScale, cubeScale);
+    glVertex3f(cubeScale, cubeScale, cubeScale);
+    glVertex3f(cubeScale, cubeScale, -cubeScale);
     
     // Bottom face
     glNormal3f(0.0f, -1.0f, 0.0f);
-    glVertex3f(-cubeScaleX, -cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, -cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, -cubeScaleY, cubeScaleX);
-    glVertex3f(-cubeScaleX, -cubeScaleY, cubeScaleX);
+    glVertex3f(-cubeScale, -cubeScale, -cubeScale);
+    glVertex3f(cubeScale, -cubeScale, -cubeScale);
+    glVertex3f(cubeScale, -cubeScale, cubeScale);
+    glVertex3f(-cubeScale, -cubeScale, cubeScale);
     
     // Right face
     glNormal3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(cubeScaleX, -cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, -cubeScaleX);
-    glVertex3f(cubeScaleX, cubeScaleY, cubeScaleX);
-    glVertex3f(cubeScaleX, -cubeScaleY, cubeScaleX);
+    glVertex3f(cubeScale, -cubeScale, -cubeScale);
+    glVertex3f(cubeScale, cubeScale, -cubeScale);
+    glVertex3f(cubeScale, cubeScale, cubeScale);
+    glVertex3f(cubeScale, -cubeScale, cubeScale);
     
     // Left face
     glNormal3f(-1.0f, 0.0f, 0.0f);
-    glVertex3f(-cubeScaleX, -cubeScaleY, -cubeScaleX);
-    glVertex3f(-cubeScaleX, -cubeScaleY, cubeScaleX);
-    glVertex3f(-cubeScaleX, cubeScaleY, cubeScaleX);
-    glVertex3f(-cubeScaleX, cubeScaleY, -cubeScaleX);
+    glVertex3f(-cubeScale, -cubeScale, -cubeScale);
+    glVertex3f(-cubeScale, -cubeScale, cubeScale);
+    glVertex3f(-cubeScale, cubeScale, cubeScale);
+    glVertex3f(-cubeScale, cubeScale, -cubeScale);
     glEnd();
     
     glPopMatrix();
