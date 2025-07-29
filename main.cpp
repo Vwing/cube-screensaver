@@ -7,6 +7,9 @@
 #include <ctime>
 #include <cstdlib>
 
+#define IDD_CONFIG 1001
+#define IDC_STATIC -1
+
 #pragma comment(lib, "scrnsave.lib")
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "glu32.lib")
@@ -28,6 +31,7 @@ struct Monitor {
     HDC hdc;
     HGLRC hglrc;
     Cube cube;
+    HWND hwnd;
 };
 
 std::vector<Monitor> monitors;
@@ -38,6 +42,9 @@ const int CELEBRATION_DURATION = 60;
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
     Monitor mon;
     mon.bounds = *lprcMonitor;
+    mon.hwnd = NULL;
+    mon.hdc = NULL;
+    mon.hglrc = NULL;
     
     float width = static_cast<float>(lprcMonitor->right - lprcMonitor->left);
     float height = static_cast<float>(lprcMonitor->bottom - lprcMonitor->top);
@@ -234,14 +241,23 @@ void RenderScene(Monitor& mon) {
 
 LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     static UINT_PTR timer;
+    static bool isFirstMonitor = true;
     
     switch (message) {
     case WM_CREATE:
         srand(static_cast<unsigned>(time(nullptr)));
-        EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
+        if (isFirstMonitor) {
+            monitors.clear();
+            EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
+            isFirstMonitor = false;
+        }
         
         for (auto& mon : monitors) {
-            InitOpenGL(hwnd, mon);
+            if (mon.hwnd == NULL) {
+                mon.hwnd = hwnd;
+                InitOpenGL(hwnd, mon);
+                break;
+            }
         }
         
         timer = SetTimer(hwnd, 1, 16, NULL);
@@ -249,26 +265,67 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         
     case WM_TIMER:
         for (auto& mon : monitors) {
-            RenderScene(mon);
+            if (mon.hwnd == hwnd && mon.hglrc != NULL) {
+                RenderScene(mon);
+                break;
+            }
         }
         return 0;
         
     case WM_DESTROY:
         KillTimer(hwnd, timer);
         for (auto& mon : monitors) {
-            wglMakeCurrent(NULL, NULL);
-            wglDeleteContext(mon.hglrc);
-            ReleaseDC(hwnd, mon.hdc);
+            if (mon.hwnd == hwnd) {
+                wglMakeCurrent(NULL, NULL);
+                wglDeleteContext(mon.hglrc);
+                ReleaseDC(hwnd, mon.hdc);
+                mon.hwnd = NULL;
+                mon.hglrc = NULL;
+                break;
+            }
         }
-        monitors.clear();
+        if (isFirstMonitor == false) {
+            bool allClosed = true;
+            for (auto& mon : monitors) {
+                if (mon.hwnd != NULL) {
+                    allClosed = false;
+                    break;
+                }
+            }
+            if (allClosed) {
+                monitors.clear();
+                isFirstMonitor = true;
+            }
+        }
         PostQuitMessage(0);
+        return 0;
+        
+    case WM_DISPLAYCHANGE:
+        monitors.clear();
+        isFirstMonitor = true;
         return 0;
     }
     
     return DefScreenSaverProc(hwnd, message, wParam, lParam);
 }
 
-BOOL WINAPI ScreenSaverConfigureDialog(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
+    static HWND hwndParent;
+    
+    switch (message) {
+    case WM_INITDIALOG:
+        hwndParent = (HWND)lParam;
+        return TRUE;
+        
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDOK:
+        case IDCANCEL:
+            EndDialog(hDlg, LOWORD(wParam));
+            return TRUE;
+        }
+        break;
+    }
     return FALSE;
 }
 

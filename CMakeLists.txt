@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_EXECUTABLE_SUFFIX ".scr")
 
 # Add executable
-add_executable(BouncingCube WIN32 main.cpp screensaver.def)
+add_executable(BouncingCube WIN32 main.cpp screensaver.def screensaver.rc)
 
 # Link required libraries
 target_link_libraries(BouncingCube 
