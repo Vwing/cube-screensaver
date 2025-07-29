@@ -17,8 +17,9 @@
 struct Cube {
     float x, y, z;  // Screen space coordinates in pixels
     float vx, vy, vz;  // Velocity in pixels per frame
-    float rotation;
-    float rotationSpeed;
+    float rotationMatrix[16];  // 4x4 rotation matrix to preserve orientation
+    float rotationAxisX, rotationAxisY, rotationAxisZ;  // Current rotation axis
+    float rotationSpeed;  // Angular velocity
     COLORREF color;
     bool celebratingCorner;
     int celebrationTimer;
@@ -39,6 +40,28 @@ std::vector<Monitor> monitors;
 const float CUBE_SIZE = 50.0f;  // Size in pixels
 const float SPEED_MULTIPLIER = 1.0f;
 const int CELEBRATION_DURATION = 60;
+
+void MultiplyMatrix4x4(float result[16], const float a[16], const float b[16]) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            result[i * 4 + j] = 0;
+            for (int k = 0; k < 4; k++) {
+                result[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+            }
+        }
+    }
+}
+
+void CreateRotationMatrix(float matrix[16], float angle, float x, float y, float z) {
+    float c = cos(angle * 3.14159f / 180.0f);
+    float s = sin(angle * 3.14159f / 180.0f);
+    float ic = 1.0f - c;
+    
+    matrix[0] = c + x*x*ic;     matrix[1] = x*y*ic - z*s;   matrix[2] = x*z*ic + y*s;   matrix[3] = 0;
+    matrix[4] = y*x*ic + z*s;   matrix[5] = c + y*y*ic;     matrix[6] = y*z*ic - x*s;   matrix[7] = 0;
+    matrix[8] = z*x*ic - y*s;   matrix[9] = z*y*ic + x*s;   matrix[10] = c + z*z*ic;    matrix[11] = 0;
+    matrix[12] = 0;             matrix[13] = 0;             matrix[14] = 0;             matrix[15] = 1;
+}
 
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
     Monitor mon;
@@ -74,8 +97,19 @@ void InitializeCube() {
         globalCube.vy = sin(angle) * speed * SPEED_MULTIPLIER;
         globalCube.vz = 0;
         
-        globalCube.rotation = 0;
-        globalCube.rotationSpeed = 1.0f + (static_cast<float>(rand()) / RAND_MAX) * 2.0f;
+        // Initialize rotation matrix as identity
+        for (int i = 0; i < 16; i++) globalCube.rotationMatrix[i] = 0.0f;
+        globalCube.rotationMatrix[0] = globalCube.rotationMatrix[5] = globalCube.rotationMatrix[10] = globalCube.rotationMatrix[15] = 1.0f;
+        
+        // Random rotation axis (normalized)
+        float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisLength = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+        globalCube.rotationAxisX = axisX / axisLength;
+        globalCube.rotationAxisY = axisY / axisLength;
+        globalCube.rotationAxisZ = axisZ / axisLength;
+        globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 2.0f);
         globalCube.color = RGB(rand() % 128 + 128, rand() % 128 + 128, rand() % 128 + 128);
         globalCube.celebratingCorner = false;
         globalCube.celebrationTimer = 0;
@@ -112,19 +146,17 @@ void InitOpenGL(HWND hwnd, Monitor& mon) {
 }
 
 void DrawCube(const Cube& cube, const Monitor& mon) {
-    // Convert world coordinates to screen-relative coordinates
-    float relX = (cube.x - mon.bounds.left) / (mon.bounds.right - mon.bounds.left) * 2.0f - 1.0f;
-    float relY = -((cube.y - mon.bounds.top) / (mon.bounds.bottom - mon.bounds.top) * 2.0f - 1.0f);
+    // Convert world coordinates to screen-relative coordinates accounting for aspect ratio
+    float aspect = (float)(mon.bounds.right - mon.bounds.left) / (mon.bounds.bottom - mon.bounds.top);
+    float relX = (cube.x - mon.bounds.left) / (mon.bounds.right - mon.bounds.left) * 4.0f * aspect - 2.0f * aspect;
+    float relY = -((cube.y - mon.bounds.top) / (mon.bounds.bottom - mon.bounds.top) * 4.0f - 2.0f);
     
-    // Calculate uniform cube size based on smaller screen dimension to maintain aspect ratio
-    float screenWidth = mon.bounds.right - mon.bounds.left;
-    float screenHeight = mon.bounds.bottom - mon.bounds.top;
-    float minDimension = min(screenWidth, screenHeight);
-    float cubeScale = CUBE_SIZE / minDimension * 2.0f;
+    // Fixed cube size for perspective projection
+    float cubeScale = 0.1f;
     
     glPushMatrix();
-    glTranslatef(relX, relY, -2.0f);
-    glRotatef(cube.rotation, 1.0f, 1.0f, 0.0f);
+    glTranslatef(relX, relY, -5.0f);
+    glMultMatrixf(cube.rotationMatrix);
     
     float r = GetRValue(cube.color) / 255.0f;
     float g = GetGValue(cube.color) / 255.0f;
@@ -194,9 +226,18 @@ void UpdateCube() {
     globalCube.x += globalCube.vx;
     globalCube.y += globalCube.vy;
     
-    // Update rotation
-    globalCube.rotation += globalCube.rotationSpeed;
-    if (globalCube.rotation > 360.0f) globalCube.rotation -= 360.0f;
+    // Update rotation by applying incremental rotation to current matrix
+    float rotMatrix[16];
+    CreateRotationMatrix(rotMatrix, globalCube.rotationSpeed, 
+                        globalCube.rotationAxisX, globalCube.rotationAxisY, globalCube.rotationAxisZ);
+    
+    float newMatrix[16];
+    MultiplyMatrix4x4(newMatrix, rotMatrix, globalCube.rotationMatrix);
+    
+    // Copy result back
+    for (int i = 0; i < 16; i++) {
+        globalCube.rotationMatrix[i] = newMatrix[i];
+    }
     
     // Get total desktop bounds
     RECT totalBounds = {0};
@@ -215,15 +256,26 @@ void UpdateCube() {
         globalCube.x = totalBounds.left + CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
-        // Add subtle randomness to bounce direction (1-3 degrees)
-        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
-        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
-        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
-        globalCube.vx = cos(angle) * speed;
-        globalCube.vy = sin(angle) * speed;
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
+        float currentAngle = atan2(globalCube.vy, globalCube.vx);
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vy > 0) randomOffset = -randomOffset; // Make bounce more extreme away from wall
+        else randomOffset = randomOffset;
         
-        // Randomize angular velocity
-        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float newAngle = currentAngle + randomOffset;
+        globalCube.vx = cos(newAngle) * speed;
+        globalCube.vy = sin(newAngle) * speed;
+        
+        // Change to new random rotation axis and speed - matrix preserves current orientation
+        float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisLength = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+        globalCube.rotationAxisX = axisX / axisLength;
+        globalCube.rotationAxisY = axisY / axisLength;
+        globalCube.rotationAxisZ = axisZ / axisLength;
+        globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
         if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
             abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
@@ -233,15 +285,26 @@ void UpdateCube() {
         globalCube.x = totalBounds.right - CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
-        // Add subtle randomness to bounce direction (1-3 degrees)
-        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
-        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
-        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
-        globalCube.vx = cos(angle) * speed;
-        globalCube.vy = sin(angle) * speed;
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
+        float currentAngle = atan2(globalCube.vy, globalCube.vx);
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vy > 0) randomOffset = randomOffset; // Make bounce more extreme away from wall
+        else randomOffset = -randomOffset;
         
-        // Randomize angular velocity
-        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float newAngle = currentAngle + randomOffset;
+        globalCube.vx = cos(newAngle) * speed;
+        globalCube.vy = sin(newAngle) * speed;
+        
+        // Change to new random rotation axis and speed - matrix preserves current orientation
+        float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisLength = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+        globalCube.rotationAxisX = axisX / axisLength;
+        globalCube.rotationAxisY = axisY / axisLength;
+        globalCube.rotationAxisZ = axisZ / axisLength;
+        globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
         if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
             abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
@@ -253,15 +316,26 @@ void UpdateCube() {
         globalCube.y = totalBounds.top + CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
-        // Add subtle randomness to bounce direction (1-3 degrees)
-        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
-        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
-        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
-        globalCube.vx = cos(angle) * speed;
-        globalCube.vy = sin(angle) * speed;
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
+        float currentAngle = atan2(globalCube.vy, globalCube.vx);
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vx > 0) randomOffset = randomOffset; // Make bounce more extreme away from wall
+        else randomOffset = -randomOffset;
         
-        // Randomize angular velocity
-        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float newAngle = currentAngle + randomOffset;
+        globalCube.vx = cos(newAngle) * speed;
+        globalCube.vy = sin(newAngle) * speed;
+        
+        // Change to new random rotation axis and speed - matrix preserves current orientation
+        float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisLength = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+        globalCube.rotationAxisX = axisX / axisLength;
+        globalCube.rotationAxisY = axisY / axisLength;
+        globalCube.rotationAxisZ = axisZ / axisLength;
+        globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
         if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
             abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
@@ -271,15 +345,26 @@ void UpdateCube() {
         globalCube.y = totalBounds.bottom - CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
-        // Add subtle randomness to bounce direction (1-3 degrees)
-        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
-        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
-        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
-        globalCube.vx = cos(angle) * speed;
-        globalCube.vy = sin(angle) * speed;
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
+        float currentAngle = atan2(globalCube.vy, globalCube.vx);
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vx > 0) randomOffset = -randomOffset; // Make bounce more extreme away from wall
+        else randomOffset = randomOffset;
         
-        // Randomize angular velocity
-        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float newAngle = currentAngle + randomOffset;
+        globalCube.vx = cos(newAngle) * speed;
+        globalCube.vy = sin(newAngle) * speed;
+        
+        // Change to new random rotation axis and speed - matrix preserves current orientation
+        float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+        float axisLength = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+        globalCube.rotationAxisX = axisX / axisLength;
+        globalCube.rotationAxisY = axisY / axisLength;
+        globalCube.rotationAxisZ = axisZ / axisLength;
+        globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
         if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
             abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
@@ -309,8 +394,9 @@ void RenderScene(Monitor& mon) {
     
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    // Use orthographic projection that matches the full screen dimensions
-    glOrtho(-1.0, 1.0, -1.0, 1.0, -10.0, 10.0);
+    // Use perspective projection for proper 3D appearance
+    float aspect = (float)(mon.bounds.right - mon.bounds.left) / (mon.bounds.bottom - mon.bounds.top);
+    gluPerspective(45.0, aspect, 0.1, 100.0);
     
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
