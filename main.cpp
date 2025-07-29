@@ -214,6 +214,17 @@ void UpdateCube() {
     if (globalCube.x - CUBE_SIZE <= totalBounds.left) {
         globalCube.x = totalBounds.left + CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
+        
+        // Add subtle randomness to bounce direction (1-3 degrees)
+        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
+        globalCube.vx = cos(angle) * speed;
+        globalCube.vy = sin(angle) * speed;
+        
+        // Randomize angular velocity
+        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        
         if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
             abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
             hitCorner = true;
@@ -221,6 +232,17 @@ void UpdateCube() {
     } else if (globalCube.x + CUBE_SIZE >= totalBounds.right) {
         globalCube.x = totalBounds.right - CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
+        
+        // Add subtle randomness to bounce direction (1-3 degrees)
+        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
+        globalCube.vx = cos(angle) * speed;
+        globalCube.vy = sin(angle) * speed;
+        
+        // Randomize angular velocity
+        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        
         if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
             abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
             hitCorner = true;
@@ -230,6 +252,17 @@ void UpdateCube() {
     if (globalCube.y - CUBE_SIZE <= totalBounds.top) {
         globalCube.y = totalBounds.top + CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
+        
+        // Add subtle randomness to bounce direction (1-3 degrees)
+        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
+        globalCube.vx = cos(angle) * speed;
+        globalCube.vy = sin(angle) * speed;
+        
+        // Randomize angular velocity
+        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        
         if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
             abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
             hitCorner = true;
@@ -237,6 +270,17 @@ void UpdateCube() {
     } else if (globalCube.y + CUBE_SIZE >= totalBounds.bottom) {
         globalCube.y = totalBounds.bottom - CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
+        
+        // Add subtle randomness to bounce direction (1-3 degrees)
+        float randomAngle = ((static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f) * 0.052f; // ±3 degrees in radians
+        float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
+        float angle = atan2(globalCube.vy, globalCube.vx) + randomAngle;
+        globalCube.vx = cos(angle) * speed;
+        globalCube.vy = sin(angle) * speed;
+        
+        // Randomize angular velocity
+        globalCube.rotationSpeed = 0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f;
+        
         if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
             abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
             hitCorner = true;
