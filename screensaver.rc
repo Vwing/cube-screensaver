@@ -3,6 +3,7 @@
 
 #define IDC_CUBE_SIZE_SLIDER 1001
 #define IDC_CUBE_SIZE_LABEL 1002
+#define IDC_ENABLE_CELEBRATION 1003
 
 // Settings dialog - must use DLG_SCRNSAVECONFIGURE (2003) for scrnsave.lib
 DLG_SCRNSAVECONFIGURE DIALOG 0, 0, 220, 120
@@ -16,5 +17,6 @@ BEGIN
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 
                     70, 28, 120, 20
     LTEXT           "Medium", IDC_CUBE_SIZE_LABEL, 10, 50, 200, 10
+    CHECKBOX        "Enable corner celebration", IDC_ENABLE_CELEBRATION, 10, 65, 150, 10
     DEFPUSHBUTTON   "OK", IDOK, 85, 90, 50, 14
 END

@@ -18,6 +18,7 @@
 
 #define IDC_CUBE_SIZE_SLIDER 1001
 #define IDC_CUBE_SIZE_LABEL 1002
+#define IDC_ENABLE_CELEBRATION 1003
 #define REGISTRY_KEY "Software\\BouncingCubeScreensaver"
 
 struct Cube {
@@ -44,6 +45,7 @@ Cube globalCube;
 
 std::vector<Monitor> monitors;
 float g_CubeSize = 0.1f;  // Default cube scale for 3D rendering
+bool g_EnableCelebration = false;  // Default celebration setting
 const float SPEED_MULTIPLIER = 1.0f;
 const int CELEBRATION_DURATION = 60;
 
@@ -74,6 +76,13 @@ void LoadSettings() {
     if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         DWORD dwSize = sizeof(float);
         RegQueryValueEx(hKey, "CubeSize", NULL, NULL, (LPBYTE)&g_CubeSize, &dwSize);
+        
+        DWORD dwCelebration = 0;
+        DWORD dwCelebrationSize = sizeof(DWORD);
+        if (RegQueryValueEx(hKey, "EnableCelebration", NULL, NULL, (LPBYTE)&dwCelebration, &dwCelebrationSize) == ERROR_SUCCESS) {
+            g_EnableCelebration = (dwCelebration != 0);
+        }
+        
         RegCloseKey(hKey);
     }
 }
@@ -82,6 +91,10 @@ void SaveSettings() {
     HKEY hKey;
     if (RegCreateKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         RegSetValueEx(hKey, "CubeSize", 0, REG_BINARY, (LPBYTE)&g_CubeSize, sizeof(float));
+        
+        DWORD dwCelebration = g_EnableCelebration ? 1 : 0;
+        RegSetValueEx(hKey, "EnableCelebration", 0, REG_DWORD, (LPBYTE)&dwCelebration, sizeof(DWORD));
+        
         RegCloseKey(hKey);
     }
 }
@@ -418,7 +431,7 @@ void UpdateCube() {
         }
     }
     
-    if (hitCorner && !globalCube.celebratingCorner) {
+    if (hitCorner && !globalCube.celebratingCorner && g_EnableCelebration) {
         globalCube.celebratingCorner = true;
         globalCube.celebrationTimer = CELEBRATION_DURATION;
     }
@@ -561,6 +574,10 @@ BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, L
             
             // Update label
             SetDlgItemText(hDlg, IDC_CUBE_SIZE_LABEL, GetCubeSizeLabel(currentSliderPos));
+            
+            // Set checkbox state
+            CheckDlgButton(hDlg, IDC_ENABLE_CELEBRATION, g_EnableCelebration ? BST_CHECKED : BST_UNCHECKED);
+            
             return TRUE;
         }
         
@@ -576,6 +593,7 @@ BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, L
         if (LOWORD(wParam) == IDOK) {
             // Save settings
             g_CubeSize = CubeSizeSliderToScale(currentSliderPos);
+            g_EnableCelebration = (IsDlgButtonChecked(hDlg, IDC_ENABLE_CELEBRATION) == BST_CHECKED);
             SaveSettings();
             EndDialog(hDlg, IDOK);
             return TRUE;
