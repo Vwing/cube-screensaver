@@ -46,6 +46,7 @@ Cube globalCube;
 std::vector<Monitor> monitors;
 float g_CubeSize = 0.1f;  // Default cube scale for 3D rendering
 bool g_EnableCelebration = false;  // Default celebration setting
+bool g_MirrorMode = true;  // Default mirror mode enabled
 const float SPEED_MULTIPLIER = 1.0f;
 const int CELEBRATION_DURATION = 60;
 
@@ -83,6 +84,12 @@ void LoadSettings() {
             g_EnableCelebration = (dwCelebration != 0);
         }
         
+        DWORD dwMirrorMode = 1;  // Default to true
+        DWORD dwMirrorModeSize = sizeof(DWORD);
+        if (RegQueryValueEx(hKey, "MirrorMode", NULL, NULL, (LPBYTE)&dwMirrorMode, &dwMirrorModeSize) == ERROR_SUCCESS) {
+            g_MirrorMode = (dwMirrorMode != 0);
+        }
+        
         RegCloseKey(hKey);
     }
 }
@@ -94,6 +101,9 @@ void SaveSettings() {
         
         DWORD dwCelebration = g_EnableCelebration ? 1 : 0;
         RegSetValueEx(hKey, "EnableCelebration", 0, REG_DWORD, (LPBYTE)&dwCelebration, sizeof(DWORD));
+        
+        DWORD dwMirrorMode = g_MirrorMode ? 1 : 0;
+        RegSetValueEx(hKey, "MirrorMode", 0, REG_DWORD, (LPBYTE)&dwMirrorMode, sizeof(DWORD));
         
         RegCloseKey(hKey);
     }
@@ -122,31 +132,47 @@ float GetCubeSizeInPixels() {
 }
 
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
-    Monitor mon;
-    mon.bounds = *lprcMonitor;
-    mon.hwnd = NULL;
-    mon.hdc = NULL;
-    mon.hglrc = NULL;
-    
-    monitors.push_back(mon);
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (GetMonitorInfo(hMonitor, &mi)) {
+        Monitor mon;
+        mon.bounds = mi.rcMonitor;  // Use full monitor bounds instead of work area
+        mon.hwnd = NULL;
+        mon.hdc = NULL;
+        mon.hglrc = NULL;
+        
+        // Always add to end, we'll sort them later
+        monitors.push_back(mon);
+    }
     return TRUE;
 }
 
 void InitializeCube() {
     // Get total desktop bounds
-    RECT totalBounds = {0};
+    RECT physicsBounds = {0};
     for (const auto& mon : monitors) {
-        if (mon.bounds.left < totalBounds.left) totalBounds.left = mon.bounds.left;
-        if (mon.bounds.top < totalBounds.top) totalBounds.top = mon.bounds.top;
-        if (mon.bounds.right > totalBounds.right) totalBounds.right = mon.bounds.right;
-        if (mon.bounds.bottom > totalBounds.bottom) totalBounds.bottom = mon.bounds.bottom;
+        if (mon.bounds.left < physicsBounds.left) physicsBounds.left = mon.bounds.left;
+        if (mon.bounds.top < physicsBounds.top) physicsBounds.top = mon.bounds.top;
+        if (mon.bounds.right > physicsBounds.right) physicsBounds.right = mon.bounds.right;
+        if (mon.bounds.bottom > physicsBounds.bottom) physicsBounds.bottom = mon.bounds.bottom;
     }
     
     // Start cube in center of primary monitor
     if (!monitors.empty()) {
-        const Monitor& primary = monitors[0];
-        globalCube.x = (primary.bounds.left + primary.bounds.right) / 2.0f;
-        globalCube.y = (primary.bounds.top + primary.bounds.bottom) / 2.0f;
+        // Find the actual primary monitor using Windows API
+        POINT origin = {0, 0};
+        HMONITOR hPrimary = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+        
+        const Monitor* primary = &monitors[0];  // fallback
+        for (const auto& mon : monitors) {
+            MONITORINFO mi = { sizeof(MONITORINFO) };
+            HMONITOR hMon = MonitorFromRect(&mon.bounds, MONITOR_DEFAULTTONEAREST);
+            if (hMon == hPrimary) {
+                primary = &mon;
+                break;
+            }
+        }
+        globalCube.x = (primary->bounds.left + primary->bounds.right) / 2.0f;
+        globalCube.y = (primary->bounds.top + primary->bounds.bottom) / 2.0f;
         globalCube.z = 0.0f;
         
         float angle = (static_cast<float>(rand()) / RAND_MAX) * 2.0f * 3.14159f;
@@ -206,8 +232,16 @@ void InitOpenGL(HWND hwnd, Monitor& mon) {
 void DrawCube(const Cube& cube, const Monitor& mon) {
     // Convert world coordinates to screen-relative coordinates accounting for aspect ratio
     float aspect = (float)(mon.bounds.right - mon.bounds.left) / (mon.bounds.bottom - mon.bounds.top);
-    float relX = (cube.x - mon.bounds.left) / (mon.bounds.right - mon.bounds.left) * 4.0f * aspect - 2.0f * aspect;
-    float relY = -((cube.y - mon.bounds.top) / (mon.bounds.bottom - mon.bounds.top) * 4.0f - 2.0f);
+    
+    // Calculate relative position within this monitor (0.0 to 1.0)
+    float monitorWidth = (float)(mon.bounds.right - mon.bounds.left);
+    float monitorHeight = (float)(mon.bounds.bottom - mon.bounds.top);
+    float relPosX = (cube.x - mon.bounds.left) / monitorWidth;
+    float relPosY = (cube.y - mon.bounds.top) / monitorHeight;
+    
+    // Convert to OpenGL coordinates (-2*aspect to +2*aspect horizontally, -2 to +2 vertically)
+    float relX = (relPosX * 4.0f * aspect) - (2.0f * aspect);
+    float relY = -((relPosY * 4.0f) - 2.0f);
     
     // Use configurable cube size
     float cubeScale = g_CubeSize;
@@ -297,22 +331,44 @@ void UpdateCube() {
         globalCube.rotationMatrix[i] = newMatrix[i];
     }
     
-    // Get total desktop bounds
-    RECT totalBounds = {0};
-    for (const auto& mon : monitors) {
-        if (mon.bounds.left < totalBounds.left) totalBounds.left = mon.bounds.left;
-        if (mon.bounds.top < totalBounds.top) totalBounds.top = mon.bounds.top;
-        if (mon.bounds.right > totalBounds.right) totalBounds.right = mon.bounds.right;
-        if (mon.bounds.bottom > totalBounds.bottom) totalBounds.bottom = mon.bounds.bottom;
+    // Get bounds for physics (either primary monitor only or total desktop)
+    RECT physicsBounds = {0};
+    if (g_MirrorMode && !monitors.empty()) {
+        // In mirror mode, constrain physics to primary monitor only
+        POINT origin = {0, 0};
+        HMONITOR hPrimary = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+        
+        // Find primary monitor bounds
+        for (const auto& mon : monitors) {
+            MONITORINFO mi = { sizeof(MONITORINFO) };
+            HMONITOR hMon = MonitorFromRect(&mon.bounds, MONITOR_DEFAULTTONEAREST);
+            if (hMon == hPrimary) {
+                physicsBounds = mon.bounds;
+                break;
+            }
+        }
+        
+        // Fallback to first monitor if primary not found
+        if (physicsBounds.right == 0) {
+            physicsBounds = monitors[0].bounds;
+        }
+    } else {
+        // Multi-monitor mode: use total desktop bounds
+        for (const auto& mon : monitors) {
+            if (mon.bounds.left < physicsBounds.left) physicsBounds.left = mon.bounds.left;
+            if (mon.bounds.top < physicsBounds.top) physicsBounds.top = mon.bounds.top;
+            if (mon.bounds.right > physicsBounds.right) physicsBounds.right = mon.bounds.right;
+            if (mon.bounds.bottom > physicsBounds.bottom) physicsBounds.bottom = mon.bounds.bottom;
+        }
     }
     
     bool hitCorner = false;
     const float CUBE_SIZE = GetCubeSizeInPixels();
     const float CORNER_THRESHOLD = CUBE_SIZE * 2;
     
-    // Check boundaries against total desktop area
-    if (globalCube.x - CUBE_SIZE <= totalBounds.left) {
-        globalCube.x = totalBounds.left + CUBE_SIZE;
+    // Check boundaries against physics area
+    if (globalCube.x - CUBE_SIZE <= physicsBounds.left) {
+        globalCube.x = physicsBounds.left + CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
         // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
@@ -336,12 +392,12 @@ void UpdateCube() {
         globalCube.rotationAxisZ = axisZ / axisLength;
         globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
-        if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
-            abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
+        if (abs(globalCube.y - physicsBounds.top) < CORNER_THRESHOLD || 
+            abs(globalCube.y - physicsBounds.bottom) < CORNER_THRESHOLD) {
             hitCorner = true;
         }
-    } else if (globalCube.x + CUBE_SIZE >= totalBounds.right) {
-        globalCube.x = totalBounds.right - CUBE_SIZE;
+    } else if (globalCube.x + CUBE_SIZE >= physicsBounds.right) {
+        globalCube.x = physicsBounds.right - CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
         // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
@@ -365,14 +421,14 @@ void UpdateCube() {
         globalCube.rotationAxisZ = axisZ / axisLength;
         globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
-        if (abs(globalCube.y - totalBounds.top) < CORNER_THRESHOLD || 
-            abs(globalCube.y - totalBounds.bottom) < CORNER_THRESHOLD) {
+        if (abs(globalCube.y - physicsBounds.top) < CORNER_THRESHOLD || 
+            abs(globalCube.y - physicsBounds.bottom) < CORNER_THRESHOLD) {
             hitCorner = true;
         }
     }
     
-    if (globalCube.y - CUBE_SIZE <= totalBounds.top) {
-        globalCube.y = totalBounds.top + CUBE_SIZE;
+    if (globalCube.y - CUBE_SIZE <= physicsBounds.top) {
+        globalCube.y = physicsBounds.top + CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
         // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
@@ -396,12 +452,12 @@ void UpdateCube() {
         globalCube.rotationAxisZ = axisZ / axisLength;
         globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
-        if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
-            abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
+        if (abs(globalCube.x - physicsBounds.left) < CORNER_THRESHOLD || 
+            abs(globalCube.x - physicsBounds.right) < CORNER_THRESHOLD) {
             hitCorner = true;
         }
-    } else if (globalCube.y + CUBE_SIZE >= totalBounds.bottom) {
-        globalCube.y = totalBounds.bottom - CUBE_SIZE;
+    } else if (globalCube.y + CUBE_SIZE >= physicsBounds.bottom) {
+        globalCube.y = physicsBounds.bottom - CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
         // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
@@ -425,8 +481,8 @@ void UpdateCube() {
         globalCube.rotationAxisZ = axisZ / axisLength;
         globalCube.rotationSpeed = ((rand() % 2 == 0) ? 1 : -1) * (0.5f + (static_cast<float>(rand()) / RAND_MAX) * 3.0f);
         
-        if (abs(globalCube.x - totalBounds.left) < CORNER_THRESHOLD || 
-            abs(globalCube.x - totalBounds.right) < CORNER_THRESHOLD) {
+        if (abs(globalCube.x - physicsBounds.left) < CORNER_THRESHOLD || 
+            abs(globalCube.x - physicsBounds.right) < CORNER_THRESHOLD) {
             hitCorner = true;
         }
     }
@@ -444,8 +500,18 @@ void UpdateCube() {
     }
 }
 
+
 void RenderScene(Monitor& mon) {
-    wglMakeCurrent(mon.hdc, mon.hglrc);
+    BOOL result = wglMakeCurrent(mon.hdc, mon.hglrc);
+    if (!result) {
+        // wglMakeCurrent failed - try to recreate the context
+        if (mon.hwnd != NULL) {
+            wglDeleteContext(mon.hglrc);
+            InitOpenGL(mon.hwnd, mon);
+            wglMakeCurrent(mon.hdc, mon.hglrc);
+        }
+        return;
+    }
     
     glViewport(0, 0, mon.bounds.right - mon.bounds.left, mon.bounds.bottom - mon.bounds.top);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -460,14 +526,22 @@ void RenderScene(Monitor& mon) {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     
-    // Check if cube is visible on this monitor
-    const float CUBE_SIZE = GetCubeSizeInPixels();
-    if (globalCube.active &&
-        globalCube.x + CUBE_SIZE >= mon.bounds.left &&
-        globalCube.x - CUBE_SIZE <= mon.bounds.right &&
-        globalCube.y + CUBE_SIZE >= mon.bounds.top &&
-        globalCube.y - CUBE_SIZE <= mon.bounds.bottom) {
-        DrawCube(globalCube, mon);
+    // In mirror mode, always draw cube on all monitors
+    // In multi-monitor mode, only draw if cube is within this monitor's bounds
+    if (globalCube.active) {
+        if (g_MirrorMode) {
+            // Mirror mode: always draw the cube
+            DrawCube(globalCube, mon);
+        } else {
+            // Multi-monitor mode: only draw if cube is visible on this monitor
+            const float CUBE_SIZE = GetCubeSizeInPixels();
+            if (globalCube.x + CUBE_SIZE >= mon.bounds.left &&
+                globalCube.x - CUBE_SIZE <= mon.bounds.right &&
+                globalCube.y + CUBE_SIZE >= mon.bounds.top &&
+                globalCube.y - CUBE_SIZE <= mon.bounds.bottom) {
+                DrawCube(globalCube, mon);
+            }
+        }
     }
     
     SwapBuffers(mon.hdc);
@@ -480,25 +554,38 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     
     switch (message) {
     case WM_CREATE:
-        srand(static_cast<unsigned>(time(nullptr)));
-        if (isFirstMonitor) {
-            LoadSettings();  // Load settings before initializing
-            monitors.clear();
-            EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
-            InitializeCube();
-            isFirstMonitor = false;
-        }
-        
-        for (auto& mon : monitors) {
-            if (mon.hwnd == NULL) {
-                mon.hwnd = hwnd;
-                InitOpenGL(hwnd, mon);
-                break;
+        {
+            if (isFirstMonitor) {
+                // Use a better random seed combining time and process ID
+                srand(static_cast<unsigned>(time(nullptr)) ^ GetCurrentProcessId());
+                LoadSettings();  // Load settings before initializing
+                monitors.clear();
+                EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
+                InitializeCube();
+                isFirstMonitor = false;
             }
+            
+            // Find the monitor that corresponds to this window
+            HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(MONITORINFO) };
+            GetMonitorInfo(hMonitor, &mi);
+            
+            for (auto& mon : monitors) {
+                // Match monitor by bounds
+                if (mon.hwnd == NULL && 
+                    mon.bounds.left == mi.rcMonitor.left &&
+                    mon.bounds.top == mi.rcMonitor.top &&
+                    mon.bounds.right == mi.rcMonitor.right &&
+                    mon.bounds.bottom == mi.rcMonitor.bottom) {
+                    mon.hwnd = hwnd;
+                    InitOpenGL(hwnd, mon);
+                    break;
+                }
+            }
+            
+            timer = SetTimer(hwnd, 1, 16, NULL);
+            return 0;
         }
-        
-        timer = SetTimer(hwnd, 1, 16, NULL);
-        return 0;
         
     case WM_TIMER:
         // Update cube once per timer tick
@@ -507,7 +594,7 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             lastUpdater = hwnd;
         }
         
-        // Render on all monitors
+        // Each window renders to its own monitor's context
         for (auto& mon : monitors) {
             if (mon.hwnd == hwnd && mon.hglrc != NULL) {
                 RenderScene(mon);
