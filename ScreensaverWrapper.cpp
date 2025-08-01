@@ -23,7 +23,7 @@ std::wstring g_ExitEventName;
 
 float g_CubeSize = 0.1f;  // Default cube scale for 3D rendering
 bool g_EnableCelebration = false;  // Default celebration setting
-bool g_MirrorMode = true;  // Default mirror mode enabled
+bool g_MirrorMode = false;  // Default mirror mode disabled for multi-monitor support
 
 void LoadSettings() {
     HKEY hKey;
@@ -37,7 +37,7 @@ void LoadSettings() {
             g_EnableCelebration = (dwCelebration != 0);
         }
         
-        DWORD dwMirrorMode = 1;  // Default to true
+        DWORD dwMirrorMode = 0;  // Default to false for multi-monitor support
         DWORD dwMirrorModeSize = sizeof(DWORD);
         if (RegQueryValueEx(hKey, "MirrorMode", NULL, NULL, (LPBYTE)&dwMirrorMode, &dwMirrorModeSize) == ERROR_SUCCESS) {
             g_MirrorMode = (dwMirrorMode != 0);
@@ -152,7 +152,11 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             CreateExitEvent();
             
             // Launch the child application
+            LoadSettings(); // Load settings including mirror mode
             std::wstring cmdLine = L"--monitors all --exitEvent " + g_ExitEventName;
+            if (g_MirrorMode) {
+                cmdLine += L" --mirror";
+            }
             g_ChildProcess = LaunchChild(cmdLine);
             
             initialized = true;

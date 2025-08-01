@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <string>
 #include <iostream>
+#include <fstream>
+#include <io.h>
+#include <fcntl.h>
 
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "glu32.lib")
@@ -40,7 +43,7 @@ Cube globalCube;
 std::vector<Monitor> monitors;
 float g_CubeSize = 0.1f;  // Default cube scale for 3D rendering
 bool g_EnableCelebration = false;  // Default celebration setting
-bool g_MirrorMode = true;  // Default mirror mode enabled
+bool g_MirrorMode = false;  // Default mirror mode disabled for multi-monitor support
 const float SPEED_MULTIPLIER = 1.0f;
 const int CELEBRATION_DURATION = 60;
 
@@ -49,6 +52,9 @@ bool g_PreviewMode = false;
 HWND g_PreviewHWND = NULL;
 HANDLE g_ExitEvent = NULL;
 bool g_StandaloneMode = false;
+
+// Forward declaration
+void ParseCommandLine(LPWSTR cmdLine);
 
 void MultiplyMatrix4x4(float result[16], const float a[16], const float b[16]) {
     for (int i = 0; i < 4; i++) {
@@ -84,7 +90,7 @@ void LoadSettings() {
             g_EnableCelebration = (dwCelebration != 0);
         }
         
-        DWORD dwMirrorMode = 1;  // Default to true
+        DWORD dwMirrorMode = 0;  // Default to false for multi-monitor support
         DWORD dwMirrorModeSize = sizeof(DWORD);
         if (RegQueryValueEx(hKey, "MirrorMode", NULL, NULL, (LPBYTE)&dwMirrorMode, &dwMirrorModeSize) == ERROR_SUCCESS) {
             g_MirrorMode = (dwMirrorMode != 0);
@@ -290,50 +296,93 @@ void UpdateCube() {
     }
     
     // Get bounds for physics (either primary monitor only or total desktop)
-    RECT physicsBounds = {0};
-    if (g_MirrorMode && !monitors.empty()) {
-        POINT origin = {0, 0};
-        HMONITOR hPrimary = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
-        
-        for (const auto& mon : monitors) {
-            MONITORINFO mi = { sizeof(MONITORINFO) };
-            HMONITOR hMon = MonitorFromRect(&mon.bounds, MONITOR_DEFAULTTONEAREST);
-            if (hMon == hPrimary) {
-                physicsBounds = mon.bounds;
-                break;
-            }
-        }
-        
-        if (physicsBounds.right == 0) {
-            physicsBounds = monitors[0].bounds;
-        }
+    RECT physicsBounds;
+    
+    
+    if (g_MirrorMode) {
+        // Primary monitor only
+        HMONITOR hPrimary = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfo(hPrimary, &mi);
+        physicsBounds = mi.rcMonitor;
     } else {
-        for (const auto& mon : monitors) {
-            if (mon.bounds.left < physicsBounds.left) physicsBounds.left = mon.bounds.left;
-            if (mon.bounds.top < physicsBounds.top) physicsBounds.top = mon.bounds.top;
-            if (mon.bounds.right > physicsBounds.right) physicsBounds.right = mon.bounds.right;
-            if (mon.bounds.bottom > physicsBounds.bottom) physicsBounds.bottom = mon.bounds.bottom;
+        // All monitors - use system metrics for the virtual screen
+        physicsBounds.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        physicsBounds.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        physicsBounds.right = physicsBounds.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        physicsBounds.bottom = physicsBounds.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    }
+    
+    // Enhanced debug output for physics bounds and cube position
+    if (g_StandaloneMode) {
+        static int debugCounter = 0;
+        static std::wofstream debugFile;
+        static bool fileOpened = false;
+        
+        if (!fileOpened) {
+            debugFile.open(L"cube_debug.txt", std::ios::out | std::ios::trunc);
+            fileOpened = true;
         }
+        
+        if (debugCounter % 60 == 0 && debugFile.is_open()) { // Print every 60 frames (~1 second)
+            debugFile << L"g_MirrorMode=" << (g_MirrorMode ? L"true" : L"false") << std::endl;
+            
+            // Show raw system metrics
+            debugFile << L"GetSystemMetrics raw values:" << std::endl;
+            debugFile << L"  SM_XVIRTUALSCREEN=" << GetSystemMetrics(SM_XVIRTUALSCREEN) << std::endl;
+            debugFile << L"  SM_YVIRTUALSCREEN=" << GetSystemMetrics(SM_YVIRTUALSCREEN) << std::endl;
+            debugFile << L"  SM_CXVIRTUALSCREEN=" << GetSystemMetrics(SM_CXVIRTUALSCREEN) << std::endl;
+            debugFile << L"  SM_CYVIRTUALSCREEN=" << GetSystemMetrics(SM_CYVIRTUALSCREEN) << std::endl;
+            
+            debugFile << L"physicsBounds: left=" << physicsBounds.left
+                << L" top=" << physicsBounds.top
+                << L" right=" << physicsBounds.right
+                << L" bottom=" << physicsBounds.bottom << std::endl;
+            debugFile << L"cube.x=" << globalCube.x << L" cube.y=" << globalCube.y << std::endl;
+            debugFile << L"cube velocity: vx=" << globalCube.vx << L" vy=" << globalCube.vy << std::endl;
+            debugFile << L"CUBE_SIZE=" << GetCubeSizeInPixels() << std::endl;
+            
+            // Also print monitor info
+            debugFile << L"Monitors:" << std::endl;
+            for (size_t i = 0; i < monitors.size(); i++) {
+                debugFile << L"  Monitor " << i << L": left=" << monitors[i].bounds.left
+                    << L" top=" << monitors[i].bounds.top
+                    << L" right=" << monitors[i].bounds.right
+                    << L" bottom=" << monitors[i].bounds.bottom << std::endl;
+            }
+            debugFile << L"---" << std::endl;
+            debugFile.flush(); // Force output to file
+            
+            // Also try console output with printf
+            wprintf(L"physicsBounds: left=%d top=%d right=%d bottom=%d\n", 
+                physicsBounds.left, physicsBounds.top, physicsBounds.right, physicsBounds.bottom);
+            wprintf(L"cube pos: x=%.2f y=%.2f\n", globalCube.x, globalCube.y);
+            fflush(stdout);
+        }
+        debugCounter++;
     }
     
     bool hitCorner = false;
     const float CUBE_SIZE = GetCubeSizeInPixels();
     const float CORNER_THRESHOLD = CUBE_SIZE * 2;
     
-    // Check boundaries - simplified version of original collision detection
+    // Check boundaries against physics area - exact copy from main.cpp
     if (globalCube.x - CUBE_SIZE <= physicsBounds.left) {
         globalCube.x = physicsBounds.left + CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
         float currentAngle = atan2(globalCube.vy, globalCube.vx);
-        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f;
-        if (globalCube.vy > 0) randomOffset = -randomOffset;
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vy > 0) randomOffset = -randomOffset; // Make bounce more extreme away from wall
+        else randomOffset = randomOffset;
         
         float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
         float newAngle = currentAngle + randomOffset;
         globalCube.vx = cos(newAngle) * speed;
         globalCube.vy = sin(newAngle) * speed;
         
+        // Change to new random rotation axis and speed - matrix preserves current orientation
         float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
@@ -351,9 +400,10 @@ void UpdateCube() {
         globalCube.x = physicsBounds.right - CUBE_SIZE;
         globalCube.vx = -globalCube.vx;
         
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
         float currentAngle = atan2(globalCube.vy, globalCube.vx);
-        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f;
-        if (globalCube.vy > 0) randomOffset = randomOffset;
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vy > 0) randomOffset = randomOffset; // Make bounce more extreme away from wall
         else randomOffset = -randomOffset;
         
         float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
@@ -361,6 +411,7 @@ void UpdateCube() {
         globalCube.vx = cos(newAngle) * speed;
         globalCube.vy = sin(newAngle) * speed;
         
+        // Change to new random rotation axis and speed - matrix preserves current orientation
         float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
@@ -380,9 +431,10 @@ void UpdateCube() {
         globalCube.y = physicsBounds.top + CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
         float currentAngle = atan2(globalCube.vy, globalCube.vx);
-        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f;
-        if (globalCube.vx > 0) randomOffset = randomOffset;
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vx > 0) randomOffset = randomOffset; // Make bounce more extreme away from wall
         else randomOffset = -randomOffset;
         
         float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
@@ -390,6 +442,7 @@ void UpdateCube() {
         globalCube.vx = cos(newAngle) * speed;
         globalCube.vy = sin(newAngle) * speed;
         
+        // Change to new random rotation axis and speed - matrix preserves current orientation
         float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
@@ -407,9 +460,10 @@ void UpdateCube() {
         globalCube.y = physicsBounds.bottom - CUBE_SIZE;
         globalCube.vy = -globalCube.vy;
         
+        // Add randomness that makes bounce more extreme (1-3 degrees in current direction)
         float currentAngle = atan2(globalCube.vy, globalCube.vx);
-        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f;
-        if (globalCube.vx > 0) randomOffset = -randomOffset;
+        float randomOffset = (static_cast<float>(rand()) / RAND_MAX) * 0.052f; // 0-3 degrees in radians
+        if (globalCube.vx > 0) randomOffset = -randomOffset; // Make bounce more extreme away from wall
         else randomOffset = randomOffset;
         
         float speed = sqrt(globalCube.vx * globalCube.vx + globalCube.vy * globalCube.vy);
@@ -417,6 +471,7 @@ void UpdateCube() {
         globalCube.vx = cos(newAngle) * speed;
         globalCube.vy = sin(newAngle) * speed;
         
+        // Change to new random rotation axis and speed - matrix preserves current orientation
         float axisX = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisY = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
         float axisZ = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
@@ -492,7 +547,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case WM_CREATE:
         {
             srand(static_cast<unsigned>(time(nullptr)) ^ GetCurrentProcessId());
-            LoadSettings();
+            
+            // Load settings from registry, but only if not in standalone mode
+            // In standalone mode, command line arguments take precedence
+            if (!g_StandaloneMode) {
+                LoadSettings();
+            }
+            
             monitors.clear();
             EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
             InitializeCube();
@@ -589,12 +650,37 @@ void ParseCommandLine(LPWSTR cmdLine) {
     // --preview --parentHWND <hwnd>
     // --monitors all --exitEvent <name>
     // --standalone (for debugging)
+    // --mirror (enable mirror mode)
     
     std::wstring args(cmdLine);
+    
+    // Debug: Print raw command line
+    if (args.find(L"--standalone") != std::wstring::npos) {
+        OutputDebugStringW(L"ParseCommandLine: ");
+        OutputDebugStringW(cmdLine);
+        OutputDebugStringW(L"\n");
+    }
     
     // Check for standalone mode (no arguments or --standalone)
     if (args.empty() || args.find(L"--standalone") != std::wstring::npos) {
         g_StandaloneMode = true;
+    }
+    
+    // Check for mirror mode
+    if (args.find(L"--mirror") != std::wstring::npos) {
+        g_MirrorMode = true;
+        if (g_StandaloneMode) {
+            OutputDebugStringW(L"Setting g_MirrorMode = true because --mirror found\n");
+        }
+    } else {
+        if (g_StandaloneMode) {
+            OutputDebugStringW(L"No --mirror found, g_MirrorMode remains: ");
+            OutputDebugStringW(g_MirrorMode ? L"true\n" : L"false\n");
+        }
+    }
+    
+    // Return early if standalone mode (don't process other args)
+    if (g_StandaloneMode && args.find(L"--mirror") == std::wstring::npos) {
         return;
     }
     
@@ -633,6 +719,17 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     // Convert to wide string
     LPWSTR cmdLineW = GetCommandLineW();
     ParseCommandLine(cmdLineW);
+    
+    // Allocate console for debugging in standalone mode
+    if (g_StandaloneMode) {
+        AllocConsole();
+        FILE* pCout;
+        freopen_s(&pCout, "CONOUT$", "w", stdout);
+        std::wcout.imbue(std::locale(""));
+        std::wcout << L"BouncingCubeApp started in standalone mode" << std::endl;
+        std::wcout << L"Mirror mode: " << (g_MirrorMode ? L"enabled" : L"disabled") << std::endl;
+        std::wcout.flush();
+    }
     
     // Register window classes
     WNDCLASS wc = {};
