@@ -19,6 +19,7 @@
 #define IDC_CUBE_SIZE_SLIDER 1001
 #define IDC_CUBE_SIZE_LABEL 1002
 #define IDC_ENABLE_CELEBRATION 1003
+#define IDC_ENABLE_MIRROR_MODE 1004
 #define REGISTRY_KEY "Software\\BouncingCubeScreensaver"
 
 struct Cube {
@@ -664,6 +665,7 @@ BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, L
             
             // Set checkbox state
             CheckDlgButton(hDlg, IDC_ENABLE_CELEBRATION, g_EnableCelebration ? BST_CHECKED : BST_UNCHECKED);
+            CheckDlgButton(hDlg, IDC_ENABLE_MIRROR_MODE, g_MirrorMode ? BST_CHECKED : BST_UNCHECKED);
             
             return TRUE;
         }
@@ -681,6 +683,7 @@ BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, L
             // Save settings
             g_CubeSize = CubeSizeSliderToScale(currentSliderPos);
             g_EnableCelebration = (IsDlgButtonChecked(hDlg, IDC_ENABLE_CELEBRATION) == BST_CHECKED);
+            g_MirrorMode = (IsDlgButtonChecked(hDlg, IDC_ENABLE_MIRROR_MODE) == BST_CHECKED);
             SaveSettings();
             EndDialog(hDlg, IDOK);
             return TRUE;
