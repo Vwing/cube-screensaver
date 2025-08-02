@@ -52,6 +52,7 @@ bool g_PreviewMode = false;
 HWND g_PreviewHWND = NULL;
 HANDLE g_ExitEvent = NULL;
 bool g_StandaloneMode = false;
+DWORD g_StartupTime = 0;  // Track startup time to ignore initial mouse movements
 
 // Forward declaration
 void ParseCommandLine(LPWSTR cmdLine);
@@ -546,6 +547,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     switch (message) {
     case WM_CREATE:
         {
+            // Open log file for debugging WM_CREATE
+            std::wofstream createLog(L"WM_CREATE_log.txt", std::ios::out | std::ios::trunc);
+            createLog << L"WM_CREATE started" << std::endl;
+            
             srand(static_cast<unsigned>(time(nullptr)) ^ GetCurrentProcessId());
             
             // Load settings from registry, but only if not in standalone mode
@@ -554,12 +559,29 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 LoadSettings();
             }
             
+            createLog << L"Settings loaded" << std::endl;
+            
             monitors.clear();
             EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
+            createLog << L"Found " << monitors.size() << L" monitors" << std::endl;
+            
+            if (monitors.empty()) {
+                createLog << L"ERROR: No monitors found!" << std::endl;
+                createLog.close();
+                return -1;
+            }
+            
             InitializeCube();
+            createLog << L"Cube initialized" << std::endl;
             
             // Create fullscreen windows for each monitor
-            for (auto& mon : monitors) {
+            for (size_t i = 0; i < monitors.size(); i++) {
+                auto& mon = monitors[i];
+                createLog << L"Creating window for monitor " << i << L": "
+                         << L"left=" << mon.bounds.left << L" top=" << mon.bounds.top
+                         << L" width=" << (mon.bounds.right - mon.bounds.left)
+                         << L" height=" << (mon.bounds.bottom - mon.bounds.top) << std::endl;
+                
                 HWND monitorWnd = CreateWindowEx(
                     WS_EX_TOPMOST,
                     "BouncingCubeMonitor",
@@ -571,11 +593,33 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                     hwnd, NULL, GetModuleHandle(NULL), NULL
                 );
                 
+                if (!monitorWnd) {
+                    createLog << L"ERROR: Failed to create monitor window, error: " << GetLastError() << std::endl;
+                    createLog.close();
+                    return -1;
+                }
+                
                 mon.hwnd = monitorWnd;
+                createLog << L"Monitor window created successfully" << std::endl;
+                
                 InitOpenGL(monitorWnd, mon);
+                createLog << L"OpenGL initialized for monitor " << i << std::endl;
             }
             
             timer = SetTimer(hwnd, 1, 16, NULL);
+            if (!timer) {
+                createLog << L"ERROR: Failed to create timer" << std::endl;
+                createLog.close();
+                return -1;
+            }
+            
+            createLog << L"Timer created successfully" << std::endl;
+            
+            // Record startup time to ignore initial mouse movements
+            g_StartupTime = GetTickCount();
+            
+            createLog << L"WM_CREATE completed successfully" << std::endl;
+            createLog.close();
             return 0;
         }
         
@@ -594,6 +638,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case WM_RBUTTONDOWN:
     case WM_MOUSEMOVE:
         if (!g_PreviewMode && !g_StandaloneMode) {
+            // Ignore mouse movements for first 2 seconds after startup to prevent immediate exit
+            if (message == WM_MOUSEMOVE && (GetTickCount() - g_StartupTime) < 2000) {
+                return 0;
+            }
             PostQuitMessage(0);
         } else if (g_StandaloneMode && message == WM_KEYDOWN && wParam == VK_ESCAPE) {
             // In standalone mode, only exit on Escape key
@@ -627,6 +675,10 @@ LRESULT CALLBACK MonitorWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     case WM_RBUTTONDOWN:
     case WM_MOUSEMOVE:
         if (!g_PreviewMode && !g_StandaloneMode) {
+            // Ignore mouse movements for first 2 seconds after startup to prevent immediate exit
+            if (message == WM_MOUSEMOVE && (GetTickCount() - g_StartupTime) < 2000) {
+                return 0;
+            }
             // Find the main window and send the message
             HWND parent = GetParent(hwnd);
             if (parent) {
@@ -679,10 +731,7 @@ void ParseCommandLine(LPWSTR cmdLine) {
         }
     }
     
-    // Return early if standalone mode (don't process other args)
-    if (g_StandaloneMode && args.find(L"--mirror") == std::wstring::npos) {
-        return;
-    }
+    // Don't return early - we need to process other arguments even in non-standalone mode
     
     if (args.find(L"--preview") != std::wstring::npos) {
         g_PreviewMode = true;
@@ -716,9 +765,22 @@ void ParseCommandLine(LPWSTR cmdLine) {
 }
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Debug output to file
+    std::wofstream logFile(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::trunc);
+    logFile << L"WinMain started" << std::endl;
+    
     // Convert to wide string
     LPWSTR cmdLineW = GetCommandLineW();
+    logFile << L"Command line: " << cmdLineW << std::endl;
+    
     ParseCommandLine(cmdLineW);
+    
+    logFile << L"After ParseCommandLine:" << std::endl;
+    logFile << L"  g_StandaloneMode = " << (g_StandaloneMode ? L"true" : L"false") << std::endl;
+    logFile << L"  g_PreviewMode = " << (g_PreviewMode ? L"true" : L"false") << std::endl;
+    logFile << L"  g_MirrorMode = " << (g_MirrorMode ? L"true" : L"false") << std::endl;
+    logFile << L"  g_ExitEvent = " << (g_ExitEvent ? L"valid" : L"null") << std::endl;
+    logFile.flush();
     
     // Allocate console for debugging in standalone mode
     if (g_StandaloneMode) {
@@ -738,37 +800,66 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wc.lpszClassName = "BouncingCubeApp";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    RegisterClass(&wc);
+    if (!RegisterClass(&wc)) {
+        logFile << L"Failed to register main window class, error: " << GetLastError() << std::endl;
+    }
     
     wc.lpfnWndProc = MonitorWndProc;
     wc.lpszClassName = "BouncingCubeMonitor";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    RegisterClass(&wc);
+    if (!RegisterClass(&wc)) {
+        logFile << L"Failed to register monitor window class, error: " << GetLastError() << std::endl;
+    }
     
-    // Create main window (hidden)
+    logFile << L"Creating main window..." << std::endl;
+    
+    // Create main window (hidden) - must have non-zero size
     HWND mainWnd = CreateWindow(
         "BouncingCubeApp",
         "BouncingCube",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+        CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
         NULL, NULL, hInstance, NULL
     );
     
     if (!mainWnd) {
+        logFile << L"Failed to create main window, error: " << GetLastError() << std::endl;
+        logFile.close();
         return 1;
     }
     
+    logFile << L"Main window created successfully" << std::endl;
+    
+    logFile << L"Entering message loop..." << std::endl;
+    logFile.close(); // Close the file so it gets flushed
+    
     MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
+    BOOL bRet;
+    while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0) {
+        if (bRet == -1) {
+            // Error in GetMessage
+            logFile.open(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::app);
+            logFile << L"GetMessage error: " << GetLastError() << std::endl;
+            logFile.close();
+            break;
+        }
+        
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         
         // Check exit event if provided
         if (g_ExitEvent && WaitForSingleObject(g_ExitEvent, 0) == WAIT_OBJECT_0) {
+            logFile.open(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::app);
+            logFile << L"Exit event signaled" << std::endl;
+            logFile.close();
             break;
         }
     }
+    
+    logFile.open(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::app);
+    logFile << L"Message loop exited, bRet = " << bRet << std::endl;
+    logFile.close();
     
     if (g_ExitEvent) {
         CloseHandle(g_ExitEvent);

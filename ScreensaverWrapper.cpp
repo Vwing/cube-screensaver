@@ -149,6 +149,9 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     switch (message) {
     case WM_CREATE:
         if (!initialized) {
+            // Debug: Log that we're starting
+            OutputDebugStringW(L"ScreenSaverProc: WM_CREATE received\n");
+            
             CreateExitEvent();
             
             // Launch the child application
@@ -157,7 +160,29 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
             if (g_MirrorMode) {
                 cmdLine += L" --mirror";
             }
+            
+            OutputDebugStringW(L"ScreenSaverProc: Launching child with command line: ");
+            OutputDebugStringW(cmdLine.c_str());
+            OutputDebugStringW(L"\n");
+            
             g_ChildProcess = LaunchChild(cmdLine);
+            
+            if (g_ChildProcess.hProcess == NULL) {
+                OutputDebugStringW(L"ScreenSaverProc: Failed to launch child process\n");
+                PostQuitMessage(0);
+                return -1;
+            }
+            
+            OutputDebugStringW(L"ScreenSaverProc: Child process launched successfully\n");
+            
+            // Check if process is still running after a short delay
+            if (WaitForSingleObject(g_ChildProcess.hProcess, 100) == WAIT_OBJECT_0) {
+                DWORD exitCode;
+                GetExitCodeProcess(g_ChildProcess.hProcess, &exitCode);
+                wchar_t msg[256];
+                swprintf_s(msg, L"ScreenSaverProc: Child process exited immediately with code %d\n", exitCode);
+                OutputDebugStringW(msg);
+            }
             
             initialized = true;
         }
