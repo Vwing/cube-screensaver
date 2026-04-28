@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <windowsx.h>  // For GET_X_LPARAM and GET_Y_LPARAM
 
 #pragma comment(lib, "scrnsave.lib")
 #pragma comment(lib, "user32.lib")
@@ -146,11 +147,32 @@ void CreateExitEvent() {
 LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     static bool initialized = false;
     
+    // Log all messages initially
+    if (message != WM_TIMER && message != WM_PAINT && message != WM_ERASEBKGND) {
+        wchar_t msg[256];
+        swprintf_s(msg, L"ScreenSaverProc: Received message 0x%04X before switch\n", message);
+        OutputDebugStringW(msg);
+    }
+    
     switch (message) {
     case WM_CREATE:
         if (!initialized) {
             // Debug: Log that we're starting
             OutputDebugStringW(L"ScreenSaverProc: WM_CREATE received\n");
+            
+            // Log window information
+            RECT rect;
+            GetWindowRect(hwnd, &rect);
+            wchar_t winInfo[256];
+            swprintf_s(winInfo, L"ScreenSaverProc: Window created at (%d,%d) size %dx%d\n", 
+                      rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+            OutputDebugStringW(winInfo);
+            
+            // Check window styles
+            LONG style = GetWindowLong(hwnd, GWL_STYLE);
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            swprintf_s(winInfo, L"ScreenSaverProc: Window style=0x%08X exStyle=0x%08X\n", style, exStyle);
+            OutputDebugStringW(winInfo);
             
             CreateExitEvent();
             
@@ -182,6 +204,8 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
                 wchar_t msg[256];
                 swprintf_s(msg, L"ScreenSaverProc: Child process exited immediately with code %d\n", exitCode);
                 OutputDebugStringW(msg);
+            } else {
+                OutputDebugStringW(L"ScreenSaverProc: Child process still running after 100ms\n");
             }
             
             initialized = true;
@@ -192,9 +216,42 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
     case WM_MOUSEMOVE:
-        // Signal child to exit
-        if (g_ExitEvent) {
-            SetEvent(g_ExitEvent);
+        {
+            wchar_t msg[256];
+            swprintf_s(msg, L"ScreenSaverProc: Received %s message\n", 
+                      message == WM_KEYDOWN ? L"WM_KEYDOWN" :
+                      message == WM_LBUTTONDOWN ? L"WM_LBUTTONDOWN" :
+                      message == WM_RBUTTONDOWN ? L"WM_RBUTTONDOWN" :
+                      L"WM_MOUSEMOVE");
+            OutputDebugStringW(msg);
+            
+            // For mouse move, only exit if actually moved
+            if (message == WM_MOUSEMOVE) {
+                static POINT lastPos = {-1, -1};
+                POINT currentPos = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                
+                if (lastPos.x == -1) {
+                    // First mouse position, just record it
+                    lastPos = currentPos;
+                    OutputDebugStringW(L"ScreenSaverProc: Initial mouse position recorded\n");
+                    return 0;
+                }
+                
+                if (lastPos.x == currentPos.x && lastPos.y == currentPos.y) {
+                    // Mouse hasn't actually moved
+                    OutputDebugStringW(L"ScreenSaverProc: Mouse position unchanged, ignoring\n");
+                    return 0;
+                }
+                
+                lastPos = currentPos;
+            }
+            
+            OutputDebugStringW(L"ScreenSaverProc: Signaling exit event\n");
+            
+            // Signal child to exit
+            if (g_ExitEvent) {
+                SetEvent(g_ExitEvent);
+            }
         }
         
         // Wait for child to exit (with timeout)
@@ -228,7 +285,23 @@ LRESULT WINAPI ScreenSaverProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
         return 0;
     }
     
-    return DefScreenSaverProc(hwnd, message, wParam, lParam);
+    // Log unhandled messages
+    if (message != WM_TIMER && message != WM_PAINT && message != WM_ERASEBKGND) {
+        wchar_t msg[256];
+        swprintf_s(msg, L"ScreenSaverProc: Unhandled message 0x%04X, passing to DefScreenSaverProc\n", message);
+        OutputDebugStringW(msg);
+    }
+    
+    LRESULT result = DefScreenSaverProc(hwnd, message, wParam, lParam);
+    
+    // Log if DefScreenSaverProc handled it specially
+    if (message != WM_TIMER && message != WM_PAINT && message != WM_ERASEBKGND && result != 0) {
+        wchar_t msg[256];
+        swprintf_s(msg, L"ScreenSaverProc: DefScreenSaverProc returned %ld for message 0x%04X\n", (long)result, message);
+        OutputDebugStringW(msg);
+    }
+    
+    return result;
 }
 
 BOOL WINAPI ScreenSaverConfigureDialog(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {

@@ -174,6 +174,9 @@ void InitializeCube() {
 }
 
 void InitOpenGL(HWND hwnd, Monitor& mon) {
+    std::wofstream glLog(L"OpenGL_init.txt", std::ios::out | std::ios::app);
+    glLog << L"InitOpenGL called for HWND: " << hwnd << std::endl;
+    
     PIXELFORMATDESCRIPTOR pfd = {
         sizeof(PIXELFORMATDESCRIPTOR), 1,
         PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
@@ -182,10 +185,42 @@ void InitOpenGL(HWND hwnd, Monitor& mon) {
     };
     
     mon.hdc = GetDC(hwnd);
+    if (!mon.hdc) {
+        glLog << L"ERROR: GetDC failed, error: " << GetLastError() << std::endl;
+        glLog.close();
+        return;
+    }
+    glLog << L"GetDC succeeded" << std::endl;
+    
     int pixelFormat = ChoosePixelFormat(mon.hdc, &pfd);
-    SetPixelFormat(mon.hdc, pixelFormat, &pfd);
+    if (!pixelFormat) {
+        glLog << L"ERROR: ChoosePixelFormat failed, error: " << GetLastError() << std::endl;
+        glLog.close();
+        return;
+    }
+    glLog << L"ChoosePixelFormat succeeded, format: " << pixelFormat << std::endl;
+    
+    if (!SetPixelFormat(mon.hdc, pixelFormat, &pfd)) {
+        glLog << L"ERROR: SetPixelFormat failed, error: " << GetLastError() << std::endl;
+        glLog.close();
+        return;
+    }
+    glLog << L"SetPixelFormat succeeded" << std::endl;
+    
     mon.hglrc = wglCreateContext(mon.hdc);
-    wglMakeCurrent(mon.hdc, mon.hglrc);
+    if (!mon.hglrc) {
+        glLog << L"ERROR: wglCreateContext failed, error: " << GetLastError() << std::endl;
+        glLog.close();
+        return;
+    }
+    glLog << L"wglCreateContext succeeded" << std::endl;
+    
+    if (!wglMakeCurrent(mon.hdc, mon.hglrc)) {
+        glLog << L"ERROR: wglMakeCurrent failed, error: " << GetLastError() << std::endl;
+        glLog.close();
+        return;
+    }
+    glLog << L"wglMakeCurrent succeeded" << std::endl;
     
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
@@ -199,6 +234,9 @@ void InitOpenGL(HWND hwnd, Monitor& mon) {
     glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
     glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiff);
+    
+    glLog << L"OpenGL initialization completed successfully" << std::endl;
+    glLog.close();
 }
 
 void DrawCube(const Cube& cube, const Monitor& mon) {
@@ -543,6 +581,39 @@ void RenderScene(Monitor& mon) {
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     static UINT_PTR timer;
+    static std::wofstream msgLog;
+    static bool logOpened = false;
+    
+    // Open log file on first message
+    if (!logOpened) {
+        msgLog.open(L"MainWndProc_messages.txt", std::ios::out | std::ios::trunc);
+        logOpened = true;
+    }
+    
+    // Log all messages except WM_TIMER and WM_PAINT
+    if (message != WM_TIMER && message != WM_PAINT && message != WM_ERASEBKGND && message != 0x0118) { // 0x0118 is WM_SYSTIMER
+        DWORD currentTime = GetTickCount() - g_StartupTime;
+        msgLog << L"[" << currentTime << L"ms] MainWndProc: Message 0x" << std::hex << message << std::dec;
+        
+        // Add message name for known messages
+        switch(message) {
+            case WM_CREATE: msgLog << L" (WM_CREATE)"; break;
+            case WM_DESTROY: msgLog << L" (WM_DESTROY)"; break;
+            case WM_MOUSEMOVE: msgLog << L" (WM_MOUSEMOVE)"; break;
+            case WM_KEYDOWN: msgLog << L" (WM_KEYDOWN)"; break;
+            case WM_LBUTTONDOWN: msgLog << L" (WM_LBUTTONDOWN)"; break;
+            case WM_RBUTTONDOWN: msgLog << L" (WM_RBUTTONDOWN)"; break;
+            case WM_SIZE: msgLog << L" (WM_SIZE)"; break;
+            case WM_MOVE: msgLog << L" (WM_MOVE)"; break;
+            case WM_ACTIVATE: msgLog << L" (WM_ACTIVATE)"; break;
+            case WM_SHOWWINDOW: msgLog << L" (WM_SHOWWINDOW)"; break;
+            case WM_WINDOWPOSCHANGING: msgLog << L" (WM_WINDOWPOSCHANGING)"; break;
+            case WM_WINDOWPOSCHANGED: msgLog << L" (WM_WINDOWPOSCHANGED)"; break;
+        }
+        
+        msgLog << std::endl;
+        msgLog.flush();
+    }
     
     switch (message) {
     case WM_CREATE:
@@ -669,6 +740,40 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 }
 
 LRESULT CALLBACK MonitorWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    static std::wofstream msgLog;
+    static bool logOpened = false;
+    
+    // Open log file on first message
+    if (!logOpened) {
+        msgLog.open(L"MonitorWndProc_messages.txt", std::ios::out | std::ios::app);
+        logOpened = true;
+    }
+    
+    // Log all messages except WM_TIMER, WM_PAINT, and similar
+    if (message != WM_TIMER && message != WM_PAINT && message != WM_ERASEBKGND && message != 0x0118) {
+        DWORD currentTime = GetTickCount() - g_StartupTime;
+        msgLog << L"[" << currentTime << L"ms] MonitorWndProc (HWND:" << hwnd << L"): Message 0x" << std::hex << message << std::dec;
+        
+        // Add message name for known messages
+        switch(message) {
+            case WM_CREATE: msgLog << L" (WM_CREATE)"; break;
+            case WM_DESTROY: msgLog << L" (WM_DESTROY)"; break;
+            case WM_MOUSEMOVE: msgLog << L" (WM_MOUSEMOVE)"; break;
+            case WM_KEYDOWN: msgLog << L" (WM_KEYDOWN)"; break;
+            case WM_LBUTTONDOWN: msgLog << L" (WM_LBUTTONDOWN)"; break;
+            case WM_RBUTTONDOWN: msgLog << L" (WM_RBUTTONDOWN)"; break;
+            case WM_SIZE: msgLog << L" (WM_SIZE)"; break;
+            case WM_MOVE: msgLog << L" (WM_MOVE)"; break;
+            case WM_ACTIVATE: msgLog << L" (WM_ACTIVATE)"; break;
+            case WM_SHOWWINDOW: msgLog << L" (WM_SHOWWINDOW)"; break;
+            case WM_SETFOCUS: msgLog << L" (WM_SETFOCUS)"; break;
+            case WM_KILLFOCUS: msgLog << L" (WM_KILLFOCUS)"; break;
+        }
+        
+        msgLog << std::endl;
+        msgLog.flush();
+    }
+    
     switch (message) {
     case WM_KEYDOWN:
     case WM_LBUTTONDOWN:
@@ -836,6 +941,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     
     MSG msg;
     BOOL bRet;
+    int messageCount = 0;
+    DWORD lastEventCheck = GetTickCount();
+    
     while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0) {
         if (bRet == -1) {
             // Error in GetMessage
@@ -845,15 +953,23 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             break;
         }
         
+        messageCount++;
+        
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         
-        // Check exit event if provided
-        if (g_ExitEvent && WaitForSingleObject(g_ExitEvent, 0) == WAIT_OBJECT_0) {
-            logFile.open(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::app);
-            logFile << L"Exit event signaled" << std::endl;
-            logFile.close();
-            break;
+        // Check exit event if provided - but only every 10ms to avoid tight polling
+        DWORD currentTime = GetTickCount();
+        if (g_ExitEvent && (currentTime - lastEventCheck) >= 10) {
+            lastEventCheck = currentTime;
+            
+            if (WaitForSingleObject(g_ExitEvent, 0) == WAIT_OBJECT_0) {
+                logFile.open(L"BouncingCubeApp_log.txt", std::ios::out | std::ios::app);
+                logFile << L"Exit event signaled after " << messageCount << L" messages, " 
+                        << (currentTime - g_StartupTime) << L"ms since startup" << std::endl;
+                logFile.close();
+                break;
+            }
         }
     }
     
